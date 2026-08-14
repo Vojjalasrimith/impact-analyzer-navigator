@@ -1,4 +1,4 @@
-import type { Entity, Relationship, GraphData, ImpactAnalysisResult, ChatTurn, ChatResponse } from '../types/index.js';
+import type { Entity, Relationship, GraphData, ChatTurn, ChatResponse } from '../types/index.js';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
 
@@ -93,20 +93,6 @@ export async function deleteRelationship(id: string): Promise<void> {
     const errorData = await response.json().catch(() => ({}));
     throw new Error(errorData.error || `Failed to delete relationship: ${response.statusText}`);
   }
-}
-
-// Impact Analysis API
-export async function runImpactAnalysis(entityId: string): Promise<ImpactAnalysisResult> {
-  const response = await fetch(`${API_BASE_URL}/impact-analysis`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ entityId })
-  });
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.error || `Failed to run impact analysis: ${response.statusText}`);
-  }
-  return response.json();
 }
 
 // Chat API

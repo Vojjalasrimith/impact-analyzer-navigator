@@ -40,18 +40,6 @@ export interface GraphData {
   edges: GraphEdge[];
 }
 
-export interface ImpactAnalysisResult {
-  target: string;
-  risk: 'LOW' | 'MEDIUM' | 'HIGH';
-  summary: string;
-  affectedServices: string[];
-  affectedFeatures: string[];
-  developers: string[];
-  paths: string[][];
-  recommendedTests: string[];
-  explanations: string[];
-}
-
 export interface ChatTurn {
   role: 'user' | 'assistant';
   content: string;

@@ -4,11 +4,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { connectDatabase } from './src/config/db.js';
-import entityRouter from './src/routes/entityRoutes.js';
-import relationshipRouter from './src/routes/relationshipRoutes.js';
-import graphRouter from './src/routes/graphRoutes.js';
-import impactRouter from './src/routes/impactRoutes.js';
-import chatRouter from './src/routes/chatRoutes.js';
+import ApiRouter from "./src/routes/routes.js"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -66,20 +62,7 @@ app.get('/api/health', (req: Request, res: Response) => {
   });
 });
 
-// Entity endpoints
-app.use('/api/entities', entityRouter);
-
-// Relationship endpoints
-app.use('/api/relationships', relationshipRouter);
-
-// Graph endpoint
-app.use('/api/graph', graphRouter);
-
-// Impact analysis endpoint
-app.use('/api/impact-analysis', impactRouter);
-
-// Conversational impact-analysis chat endpoint
-app.use('/api/chat', chatRouter);
+app.use('/api', ApiRouter);
 
 // Serve the built frontend as static assets in production, with SPA fallback
 if (process.env.NODE_ENV === 'production') {
