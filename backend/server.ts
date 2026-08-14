@@ -70,7 +70,7 @@ app.use('/api', ApiRouter);
 
 // Serve the built frontend as static assets in production, with SPA fallback
 if (process.env.NODE_ENV === 'production') {
-  const frontendDist = path.resolve(__dirname, '../frontend/dist');
+  const frontendDist = path.resolve(__dirname, '../../frontend/dist');
   app.use(express.static(frontendDist));
   app.get(/^(?!\/api).*/, (_req: Request, res: Response) => {
     res.sendFile(path.join(frontendDist, 'index.html'));
