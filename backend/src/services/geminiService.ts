@@ -1,18 +1,10 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import dotenv from 'dotenv';
-import { ChatTurn, ChatIntent } from '../types/index.js';
-import { MultiTraversalResult } from './graphTraversalService.js';
+import { ChatTurn, ChatContext, GraphSummary } from '../types/index.js';
 import { createLogger } from '../utils/logger.js';
 
 const CHAT_MODEL = 'gemini-3.5-flash-lite';
 const getLogger = createLogger('GeminiService');
-
-export interface ChatIntentClassification {
-  intent: ChatIntent;
-  searchTerms: string[];
-  entityA?: string;
-  entityB?: string;
-}
 
 const STOPWORDS = new Set([
   'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
@@ -23,42 +15,21 @@ const STOPWORDS = new Set([
   'impact', 'impacts', 'affect', 'affects', 'affected', 'analyze',
   'analysis', 'service', 'services', 'product', 'products', 'their',
   'integrate', 'integrating', 'migrate', 'migrating', 'migration',
-  'existing', 'new', 'has', 'have', 'had'
+  'existing', 'new', 'has', 'have', 'had', 'owned', 'owns', 'owner'
 ]);
 
-function naiveExtractKeywords(message: string): string[] {
+/**
+ * Pulls entity-name-like keywords out of a message for the CognoDB full-text search — this is
+ * plain string processing, not an LLM call, since entity linking is retrieval (backend's job),
+ * not reasoning (Gemini's job).
+ */
+export function extractSearchTerms(message: string): string[] {
   const words = message
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, ' ')
     .split(/\s+/)
     .filter(w => w.length > 2 && !STOPWORDS.has(w));
   return Array.from(new Set(words));
-}
-
-function naiveClassifyIntent(message: string): ChatIntentClassification {
-  const lower = message.toLowerCase();
-
-  if (/who\s+owns|owner\s+of|responsible\s+for/.test(lower)) {
-    return { intent: 'OWNERSHIP', searchTerms: naiveExtractKeywords(message) };
-  }
-
-  const pathMatch = lower.match(/path\s+between\s+(.+?)\s+and\s+(.+?)(\?|$)/) ||
-    lower.match(/connect\w*\s+(.+?)\s+and\s+(.+?)(\?|$)/) ||
-    lower.match(/relationship\s+between\s+(.+?)\s+and\s+(.+?)(\?|$)/);
-  if (pathMatch) {
-    return {
-      intent: 'PATH_BETWEEN',
-      searchTerms: naiveExtractKeywords(message),
-      entityA: pathMatch[1].trim(),
-      entityB: pathMatch[2].trim()
-    };
-  }
-
-  if (/connects?\s+to|neighbors?|what.*connect/.test(lower)) {
-    return { intent: 'NEIGHBORHOOD', searchTerms: naiveExtractKeywords(message) };
-  }
-
-  return { intent: 'IMPACT_ANALYSIS', searchTerms: naiveExtractKeywords(message) };
 }
 
 dotenv.config();
@@ -70,13 +41,30 @@ let genAI: GoogleGenerativeAI | null = null;
 if (apiKey) {
   genAI = new GoogleGenerativeAI(apiKey);
 } else {
-  getLogger('init').warn('GEMINI_API_KEY is not defined in environment variables. Operating in programmatic fallback mode for impact analysis.');
+  getLogger('init').warn('GEMINI_API_KEY is not defined in environment variables. Operating in programmatic fallback mode for chat responses.');
+}
+
+export interface ChatRAGResponse {
+  reply: string;
+  risk?: 'LOW' | 'MEDIUM' | 'HIGH';
+  recommendedTests: string[];
+  explanations: string[];
 }
 
 export const geminiService = {
-  classifyIntent: async (message: string, history: ChatTurn[]): Promise<ChatIntentClassification> => {
+  /**
+   * Single retrieve-then-generate call: answers whatever the user actually asked — a plain
+   * lookup ("who owns X", "what connects to X") or an impact analysis ("what breaks if I change
+   * X") — using only the graph context already compiled by graphTraversalService. Gemini never
+   * queries the graph itself; it only reasons over facts the backend already retrieved.
+   */
+  chatRespondRAG: async (
+    message: string,
+    history: ChatTurn[],
+    context: ChatContext
+  ): Promise<ChatRAGResponse> => {
     if (!genAI) {
-      return naiveClassifyIntent(message);
+      return generateProgrammaticFallback(context);
     }
 
     try {
@@ -88,104 +76,43 @@ export const geminiService = {
         .join('\n');
 
       const prompt = `
-You are classifying a user's message in a chat about a software dependency graph. The graph contains
-entities of type PROJECT, FEATURE, SERVICE, and DEVELOPER, each with a name and description, connected by
+You are a helpful assistant answering questions about a software dependency graph, chatting with a
+developer. The graph contains PROJECT, FEATURE, SERVICE, and DEVELOPER entities connected by
 PROJECT-HAS_FEATURE->FEATURE, FEATURE-IMPLEMENTED_BY->SERVICE, SERVICE-DEPENDS_ON->SERVICE, and
 SERVICE-OWNED_BY->DEVELOPER relationships.
 
-Recent conversation history (may be empty):
-${historyText || '(none)'}
-
-User's latest message: "${message}"
-
-Classify the message into exactly one intent:
-- "IMPACT_ANALYSIS": asking what could break, or about migrating/changing/replacing a service
-- "OWNERSHIP": asking who owns/is responsible for a service
-- "PATH_BETWEEN": asking how two specific named entities are connected/related
-- "NEIGHBORHOOD": asking what a specific entity directly connects to, without a change/migration framing
-
-Also extract:
-- "searchTerms": keywords (entity names, partial names, domain terms) to search for, excluding generic
-  words like "service"/"impact"/"migrate". Used for IMPACT_ANALYSIS/OWNERSHIP/NEIGHBORHOOD.
-- "entityA" / "entityB": for PATH_BETWEEN only, the two entity names/phrases mentioned (omit otherwise).
-
-Output ONLY raw JSON matching this schema, no markdown:
-{ "intent": "IMPACT_ANALYSIS" | "OWNERSHIP" | "PATH_BETWEEN" | "NEIGHBORHOOD", "searchTerms": ["..."], "entityA": "...", "entityB": "..." }
-`;
-
-      const result = await model.generateContent({
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: {
-          responseMimeType: 'application/json',
-          temperature: 0.1
-        }
-      });
-
-      const parsed = JSON.parse(result.response.text());
-      const validIntents: ChatIntent[] = ['IMPACT_ANALYSIS', 'OWNERSHIP', 'PATH_BETWEEN', 'NEIGHBORHOOD'];
-      const intent: ChatIntent = validIntents.includes(parsed.intent) ? parsed.intent : 'IMPACT_ANALYSIS';
-      const searchTerms = Array.isArray(parsed.searchTerms) && parsed.searchTerms.length > 0
-        ? parsed.searchTerms
-        : naiveExtractKeywords(message);
-
-      return { intent, searchTerms, entityA: parsed.entityA, entityB: parsed.entityB };
-    } catch (err: any) {
-      getLogger('classifyIntent').error('Gemini intent classification failed, reverting to naive classification', { error: err.message });
-      return naiveClassifyIntent(message);
-    }
-  },
-
-  chatAnalyze: async (
-    message: string,
-    history: ChatTurn[],
-    traversal: MultiTraversalResult
-  ): Promise<{ reply: string; risk: 'LOW' | 'MEDIUM' | 'HIGH'; recommendedTests: string[]; explanations: string[] }> => {
-    const targetNames = traversal.targets.map(t => t.name);
-    const downstreamNames = traversal.affectedServices.map(s => s.name);
-    const upstreamNames = traversal.dependsOnServices.map(s => s.name);
-    const featureNames = traversal.affectedFeatures.map(f => f.name);
-    const developerNames = traversal.affectedDevelopers.map(d => d.name);
-
-    if (!genAI) {
-      return generateChatProgrammaticFallback(targetNames, downstreamNames, upstreamNames, featureNames, traversal.paths);
-    }
-
-    try {
-      const model = genAI.getGenerativeModel({ model: CHAT_MODEL });
-
-      const historyText = history
-        .slice(-6)
-        .map(turn => `${turn.role}: ${turn.content}`)
-        .join('\n');
-
-      const prompt = `
-You are an expert software architect chatting with a developer about the impact of changing or migrating
-services in an enterprise platform. Respond conversationally, directly addressing their question.
+The question could be a plain lookup ("who owns X", "what does X connect to", "how are X and Y
+related") or an impact/migration analysis ("what breaks if I change X", "what should I test before
+migrating X"). Answer whichever it actually is, directly and conversationally, using ONLY the facts
+below.
 
 Recent conversation history (may be empty):
 ${historyText || '(none)'}
 
 User's latest message: "${message}"
 
-Here is the factual graph context retrieved for the service(s) they're asking about: ${JSON.stringify(targetNames)}
-- Downstream (services/features that depend on these, i.e. what could break): ${JSON.stringify(downstreamNames)}
-- Upstream (what these services themselves depend on, relevant if migrating/replacing them): ${JSON.stringify(upstreamNames)}
-- Affected Features: ${JSON.stringify(featureNames)}
-- Affected Developers (Owners): ${JSON.stringify(developerNames)}
-- Graph Traversal Paths: ${JSON.stringify(traversal.paths)}
+Facts retrieved from the graph:
+- Matched entities: ${JSON.stringify(context.matchedEntities.map(e => `${e.name} (${e.type})`))}
+- Direct connections: ${JSON.stringify(context.neighbors.map(n => `${n.name} (${n.type}) via ${n.relType} [${n.direction}]`))}
+- Downstream services (would be affected by a change to a matched service): ${JSON.stringify(context.downstreamServices.map(s => s.name))}
+- Upstream services (a matched service depends on): ${JSON.stringify(context.upstreamServices.map(s => s.name))}
+- Affected features: ${JSON.stringify(context.affectedFeatures.map(f => f.name))}
+- Affected projects: ${JSON.stringify(context.affectedProjects.map(p => p.name))}
+- Owners: ${JSON.stringify(context.owners.map(o => o.name))}
+- Paths between matched entities: ${JSON.stringify(context.paths)}
 
 Output ONLY raw JSON matching this schema, no markdown formatting or code fences:
 {
-  "reply": "A conversational paragraph directly answering the user's question, referencing the specific services/features/owners by name.",
-  "risk": "LOW" | "MEDIUM" | "HIGH",
+  "reply": "A conversational, direct answer to the user's actual question, referencing specific entities by name.",
+  "risk": "LOW" | "MEDIUM" | "HIGH" | null,
   "recommendedTests": ["Test case 1 description", ...],
   "explanations": ["Reasoning statement 1", ...]
 }
 
 Guidelines:
-1. Risk: "HIGH" if key projects or critical features (like Checkout/Payment) are impacted; "MEDIUM" if intermediate service chains are impacted but core consumer flows are spared; "LOW" if there are no downstream dependencies.
-2. If upstream dependencies exist, mention what the migration would also need to account for.
-3. Recommended tests must be concrete, referencing affected service/feature names.
+1. Only set "risk" and populate "recommendedTests"/"explanations" if the question is about changing, migrating, or the impact of modifying something. For a plain info/lookup question, set "risk" to null and leave those arrays empty — don't force an impact analysis onto a question that isn't one.
+2. When risk applies: "HIGH" if key projects/critical features (like Checkout/Payment) are impacted; "MEDIUM" if intermediate service chains are impacted but core consumer flows are spared; "LOW" if there's no downstream dependency.
+3. If the facts are sparse (e.g. no connections found for the matched entities), say so plainly rather than inventing anything.
 `;
 
       const result = await model.generateContent({
@@ -198,24 +125,31 @@ Guidelines:
 
       const parsed = JSON.parse(result.response.text());
       return {
-        reply: parsed.reply || `Here's what I found for ${targetNames.join(', ')}.`,
-        risk: (parsed.risk || 'MEDIUM') as 'LOW' | 'MEDIUM' | 'HIGH',
-        recommendedTests: parsed.recommendedTests || ['Run full regression test suite.'],
-        explanations: parsed.explanations || [`Changes to ${targetNames.join(', ')} propagate through the dependency graph.`]
+        reply: parsed.reply || `Here's what I found for ${context.matchedEntities.map(e => e.name).join(', ')}.`,
+        risk: parsed.risk === 'LOW' || parsed.risk === 'MEDIUM' || parsed.risk === 'HIGH' ? parsed.risk : undefined,
+        recommendedTests: Array.isArray(parsed.recommendedTests) ? parsed.recommendedTests : [],
+        explanations: Array.isArray(parsed.explanations) ? parsed.explanations : []
       };
     } catch (err: any) {
-      getLogger('chatAnalyze').error('Gemini chat analysis failed, reverting to programmatic fallback', { error: err.message });
-      return generateChatProgrammaticFallback(targetNames, downstreamNames, upstreamNames, featureNames, traversal.paths);
+      getLogger('chatRespondRAG').error('Gemini RAG response failed, reverting to programmatic fallback', { error: err.message });
+      return generateProgrammaticFallback(context);
     }
   },
 
-  chatRespondGeneric: async (
+  /**
+   * Whole-graph fallback: used when entity linking finds no CognoDB match for the message (the
+   * question doesn't name anything in the graph verbatim — e.g. "what existing services could I
+   * reuse to build an email workflow?"). Gemini reasons over the full known graph instead of a
+   * targeted neighborhood, so it can still recommend relevant existing services/owners even though
+   * nothing was directly matched.
+   */
+  chatRespondOpenGraph: async (
     message: string,
     history: ChatTurn[],
-    factsText: string
-  ): Promise<{ reply: string }> => {
+    summary: GraphSummary
+  ): Promise<ChatRAGResponse> => {
     if (!genAI) {
-      return { reply: factsText };
+      return generateOpenGraphFallback(summary);
     }
 
     try {
@@ -227,30 +161,58 @@ Guidelines:
         .join('\n');
 
       const prompt = `
-You are a helpful assistant answering questions about a software dependency graph, chatting with a developer.
-Respond conversationally and directly, in 1-3 sentences.
+You are a helpful assistant answering questions about a software dependency graph, chatting with a
+developer. The graph contains PROJECT, FEATURE, SERVICE, and DEVELOPER entities connected by
+PROJECT-HAS_FEATURE->FEATURE, FEATURE-IMPLEMENTED_BY->SERVICE, SERVICE-DEPENDS_ON->SERVICE, and
+SERVICE-OWNED_BY->DEVELOPER relationships.
+
+The user's message didn't name anything that matches a specific entity already in the graph, so
+there's no targeted neighborhood to hand you. Instead, here is the ENTIRE known graph — reason over
+it freely to answer whatever the user is actually asking (e.g. planning a new feature/workflow and
+wanting to know what existing services/developers could be reused or looped in).
 
 Recent conversation history (may be empty):
 ${historyText || '(none)'}
 
 User's latest message: "${message}"
 
-Factual graph context retrieved for this question:
-${factsText}
+All known entities:
+${JSON.stringify(summary.entities.map(e => ({ name: e.name, type: e.type, description: e.description })))}
 
-Write a natural, direct reply based ONLY on the facts above. Output ONLY the reply text — no JSON, no markdown.
+All known relationships:
+${JSON.stringify(summary.relationships.map(r => `${r.from} (${r.fromType}) -${r.relType}-> ${r.to} (${r.toType})`))}
+
+Output ONLY raw JSON matching this schema, no markdown formatting or code fences:
+{
+  "reply": "A conversational, direct answer to the user's actual question, referencing specific existing entities by name where relevant, and being explicit about anything the graph doesn't already cover.",
+  "risk": "LOW" | "MEDIUM" | "HIGH" | null,
+  "recommendedTests": ["Suggested next step 1", ...],
+  "explanations": ["Reasoning statement 1", ...]
+}
+
+Guidelines:
+1. Only set "risk" and populate "recommendedTests"/"explanations" as an impact analysis if the question is genuinely about the impact of changing an existing modeled entity. For a planning/brainstorming question about something new, set "risk" to null, and use "recommendedTests" for concrete next-step suggestions (e.g. "extend Notification Service" or "loop in Alice") only if that fits naturally — otherwise leave it empty.
+2. Never invent entities, relationships, or ownership that aren't in the facts above — if nothing in the graph is relevant, say so plainly.
 `;
 
       const result = await model.generateContent({
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.2 }
+        generationConfig: {
+          responseMimeType: 'application/json',
+          temperature: 0.2
+        }
       });
 
-      const reply = result.response.text().trim();
-      return { reply: reply || factsText };
+      const parsed = JSON.parse(result.response.text());
+      return {
+        reply: parsed.reply || `Here's what's currently in the graph: ${summary.entities.map(e => e.name).join(', ')}.`,
+        risk: parsed.risk === 'LOW' || parsed.risk === 'MEDIUM' || parsed.risk === 'HIGH' ? parsed.risk : undefined,
+        recommendedTests: Array.isArray(parsed.recommendedTests) ? parsed.recommendedTests : [],
+        explanations: Array.isArray(parsed.explanations) ? parsed.explanations : []
+      };
     } catch (err: any) {
-      getLogger('chatRespondGeneric').error('Gemini generic chat response failed, reverting to raw facts', { error: err.message });
-      return { reply: factsText };
+      getLogger('chatRespondOpenGraph').error('Gemini open-graph response failed, reverting to programmatic fallback', { error: err.message });
+      return generateOpenGraphFallback(summary);
     }
   }
 };
@@ -258,33 +220,52 @@ Write a natural, direct reply based ONLY on the facts above. Output ONLY the rep
 /**
  * Deterministic fallback for the chat flow when Gemini is unavailable
  */
-function generateChatProgrammaticFallback(
-  targets: string[],
-  downstream: string[],
-  upstream: string[],
-  features: string[],
-  paths: string[][]
-): { reply: string; risk: 'LOW' | 'MEDIUM' | 'HIGH'; recommendedTests: string[]; explanations: string[] } {
-  let risk: 'LOW' | 'MEDIUM' | 'HIGH' = 'LOW';
-  if (features.includes('Checkout') || features.includes('Payment')) {
-    risk = 'HIGH';
-  } else if (downstream.length > targets.length || features.length > 0) {
-    risk = 'MEDIUM';
+function generateProgrammaticFallback(context: ChatContext): ChatRAGResponse {
+  const targetNames = context.matchedEntities.map(e => e.name);
+  const hasServiceImpact = context.downstreamServices.length > 0 || context.upstreamServices.length > 0;
+
+  const parts: string[] = [];
+  if (context.neighbors.length > 0) {
+    parts.push(`${targetNames.join(', ')} connects to: ${context.neighbors.map(n => `${n.name} (${n.relType})`).join(', ')}.`);
+  }
+  if (context.owners.length > 0) {
+    parts.push(`Owned by: ${context.owners.map(o => o.name).join(', ')}.`);
+  }
+  if (hasServiceImpact) {
+    parts.push(`Downstream impact: ${context.downstreamServices.map(s => s.name).join(', ') || 'none'}. Upstream dependencies: ${context.upstreamServices.map(s => s.name).join(', ') || 'none'}.`);
+  }
+  if (parts.length === 0) {
+    parts.push(`${targetNames.join(', ')} has no recorded connections in the graph.`);
   }
 
-  const reply = `Programmatic analysis for "${targets.join(', ')}". This has a downstream impact on ` +
-    `${Math.max(downstream.length - targets.length, 0)} other service(s) and ${features.length} feature(s).` +
-    (upstream.length > 0 ? ` It also depends on ${upstream.length} other service(s): ${upstream.join(', ')}.` : '');
-
-  const recommendedTests = [`Perform integration tests on: ${targets.join(', ')}.`];
-  downstream.forEach(s => {
-    if (!targets.includes(s)) recommendedTests.push(`Run regression tests on dependent service: "${s}".`);
-  });
-
-  const explanations = [`Changes propagate along ${paths.length} dependency path(s).`];
-  if (upstream.length > 0) {
-    explanations.push(`Migration must also account for upstream dependencies: ${upstream.join(', ')}.`);
+  let risk: 'LOW' | 'MEDIUM' | 'HIGH' | undefined;
+  const recommendedTests: string[] = [];
+  const explanations: string[] = [];
+  if (hasServiceImpact) {
+    risk = context.downstreamServices.length > 2 ? 'HIGH' : context.downstreamServices.length > 0 ? 'MEDIUM' : 'LOW';
+    recommendedTests.push(`Perform integration tests on: ${targetNames.join(', ')}.`);
+    context.downstreamServices.forEach(s => recommendedTests.push(`Run regression tests on dependent service: "${s.name}".`));
+    explanations.push(`Changes propagate along ${context.paths.length} known path(s) in the graph.`);
   }
 
-  return { reply, risk, recommendedTests, explanations };
+  return { reply: parts.join(' '), risk, recommendedTests, explanations };
+}
+
+/**
+ * Deterministic fallback for the whole-graph chat flow when Gemini is unavailable
+ */
+function generateOpenGraphFallback(summary: GraphSummary): ChatRAGResponse {
+  const byType = (type: string) => summary.entities.filter(e => e.type === type);
+  const services = byType('SERVICE');
+  const developers = byType('DEVELOPER');
+
+  const parts: string[] = ["I couldn't match your message to a specific entity in the graph, but here's what currently exists."];
+  if (services.length > 0) {
+    parts.push(`Services: ${services.map(s => `${s.name} (${s.description || 'no description'})`).join('; ')}.`);
+  }
+  if (developers.length > 0) {
+    parts.push(`Developers: ${developers.map(d => d.name).join(', ')}.`);
+  }
+
+  return { reply: parts.join(' '), risk: undefined, recommendedTests: [], explanations: [] };
 }

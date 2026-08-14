@@ -36,9 +36,12 @@ Every answer is backed by real graph traversal — not a hallucinated guess.
 
 - 🗺️ **Visual dependency graph** — create, connect, and inspect projects/features/services/
   developers on a canvas
-- 💬 **Conversational impact analysis** — ask free-text questions, get graph-grounded answers
-- 🔀 **Four query intents** — impact/migration analysis, ownership lookup, path-between,
-  neighborhood exploration
+- 💬 **Conversational impact analysis** — ask free-text questions, get graph-grounded answers; a
+  plain lookup and a full impact analysis both come from the same single retrieval pass, no fixed
+  intents to slot the question into
+- 🌐 **Whole-graph fallback** — if nothing in the question matches an existing entity, Gemini
+  reasons over the entire known graph instead of failing to answer (e.g. open-ended planning
+  questions like "what existing services could I reuse for a new email workflow?")
 - 🔍 **Graph-native search** — CognoDB full-text entity linking, no vector DB required
 - 🛡️ **Polished UX** — loading/empty/error states throughout, in-app confirm dialogs, error
   boundary
@@ -46,14 +49,22 @@ Every answer is backed by real graph traversal — not a hallucinated guess.
 ## How it works
 
 ```text
-React → Express (backend/) → CognoDB traversal/search → structured graph facts → Gemini → conversational answer → React
+React → Express (backend/) → CognoDB search + traversal → structured graph facts → Gemini → conversational answer → React
 ```
 
-The chat agent classifies each message into one of four intents (`IMPACT_ANALYSIS`, `OWNERSHIP`,
-`PATH_BETWEEN`, `NEIGHBORHOOD`), resolves the entities it mentions via a CognoDB full-text search,
-runs the matching Cypher query, and only then asks Gemini to turn the retrieved facts into a
-reply — the same retrieve-then-generate shape as RAG, with the graph as the retrieval source
-instead of a vector store.
+The chat agent resolves whatever the message mentions via a CognoDB full-text search over entity
+name/description, then compiles a single graph context around every match — direct connections,
+downstream/upstream service impact, affected features/projects, owners, and paths between the
+matches. That context (not a fixed intent) is handed to Gemini once, and it answers freely: a plain
+lookup ("who owns X?") and a full impact analysis ("what breaks if I change X?") come from the same
+retrieval, with Gemini deciding which parts of its structured output (risk, recommended tests,
+explanations) actually apply to the question asked — the retrieve-then-generate shape of RAG, with
+the graph as the retrieval source instead of a vector store.
+
+If nothing in the message matches an existing entity, the backend doesn't dead-end — it falls back
+to handing Gemini the *entire* known graph instead. Still pure CognoDB-retrieved facts, just a
+wider net, so open-ended questions that don't name anything specific ("what existing services could
+I reuse for a new email workflow?") still get a grounded answer.
 
 ## UI walkthrough
 
@@ -83,11 +94,13 @@ service's **Ask AI About Impact** (pre-fills the question):
 
 ![Chat drawer showing a conversational impact analysis reply with risk level and affected services/features](frontend/public/image-1.png)
 
-Type a free-text question — the agent classifies intent, resolves the entities mentioned via
-CognoDB's full-text search, runs the matching graph query, and replies conversationally. The
-reply is followed by structured facts: risk level, downstream/upstream services, affected
-features, impacted owners, recommended tests, or — for ownership/path/neighborhood questions —
-the relevant entity tags or path chain. History carries across turns in the same session.
+Type a free-text question — the agent resolves the entities mentioned via CognoDB's full-text
+search, compiles the surrounding graph context in one pass, and replies conversationally. The
+reply is followed by whichever structured facts actually apply: risk level, downstream/upstream
+services, affected features/projects, owners, recommended tests, explanations, direct connections,
+or paths between matched entities — populated only when the question calls for them, never forced
+into every answer. If nothing in the message matches an existing entity, the agent reasons over the
+whole known graph instead of refusing to answer. History carries across turns in the same session.
 
 ## Why a graph database?
 
@@ -125,7 +138,8 @@ graph LR
   of the same entities, plus the relationships between them.
 - **Gemini** — stateless reasoning only. It never queries either database directly; the backend
   always retrieves first (Mongo lookup or CognoDB traversal), compiles the results into plain
-  facts, and only then hands them to Gemini for classification or natural-language reasoning.
+  facts — a targeted context around matched entities, or the whole graph if nothing matched — and
+  only then hands them to Gemini to answer freely.
 
 ## Tech stack
 
@@ -208,10 +222,8 @@ All Cypher lives in `backend/src/services/cognoService.ts`:
 | Query | What it does |
 |---|---|
 | `searchEntities` | Entity linking for the chat agent — `CALL db.index.fulltext.queryNodes('entitySearchIndex', ...)` against a full-text index (auto-created on connect: `CREATE FULLTEXT INDEX entitySearchIndex ... ON EACH [n.name, n.description]`), so free text like "notification service" ranks against names *and* descriptions entirely inside CognoDB — no MongoDB involved. |
-| `findOwners` | One-hop `(s)-[:OWNED_BY]->(dev)` lookup across a set of service ids, backing the "who owns X?" intent. |
-| `findShortestPath` | `shortestPath((a)-[*..8]-(b))` between two arbitrary entities, any relationship direction/type. Capped at 8 hops so an unrelated pair fails fast instead of scanning indefinitely. |
-| `findNeighborhood` | Every entity directly connected to a node, one hop, either direction, tagged with relationship type + direction (`outgoing`/`incoming`) — so the answer can say *how* two things connect, not just *that* they do. |
-| `analyzeMultiImpact` (`graphTraversalService.ts`, built on `getRelationships`) | The impact-analysis traversal: bidirectional BFS from one or more services — downstream (what could break) and upstream (what a migration also has to account for) — plus a DFS reconstructing human-readable propagation paths back to the owning project. |
+| `findShortestPath` | `shortestPath((a)-[*..8]-(b))` between two arbitrary entities, any relationship direction/type. Capped at 8 hops so an unrelated pair fails fast instead of scanning indefinitely. Used to surface how every pair of matched entities connects. |
+| `getRelationships` | Every `(:Entity)-[r]->(:Entity)` edge in the graph — the raw material two functions in `graphTraversalService.ts` build on: `compileContext` BFSs over it for downstream/upstream impact, affected features/projects, and owners around the matched entities; `compileGraphSummary` uses it wholesale (every entity + every relationship) for the whole-graph fallback when nothing matched. |
 
 ## API overview
 
@@ -223,4 +235,4 @@ All Cypher lives in `backend/src/services/cognoService.ts`:
 | GET / POST | `/api/relationships` | List / create relationships |
 | DELETE | `/api/relationships/:id` | Delete a relationship |
 | GET | `/api/graph` | Full graph (nodes + edges) for the canvas |
-| POST | `/api/chat` | The conversational GraphRAG agent — `{ message, history }` in, `{ reply, analysis?, graphFacts?, matchedEntities }` out |
+| POST | `/api/chat` | The conversational GraphRAG agent — `{ message, history }` in, `{ reply, risk?, recommendedTests?, explanations?, context?, matchedEntities }` out |

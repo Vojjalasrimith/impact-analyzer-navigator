@@ -45,29 +45,30 @@ export interface ChatTurn {
   content: string;
 }
 
-export interface ChatAnalysis {
-  targets: string[];
-  risk: 'LOW' | 'MEDIUM' | 'HIGH';
-  affectedServices: string[];
-  dependsOnServices: string[];
-  affectedFeatures: string[];
-  developers: string[];
-  paths: string[][];
-  recommendedTests: string[];
-  explanations: string[];
+export interface ChatContextNeighbor {
+  id: string;
+  name: string;
+  type: EntityType;
+  relType: RelationshipType;
+  direction: 'outgoing' | 'incoming';
 }
 
-export type ChatIntent = 'IMPACT_ANALYSIS' | 'OWNERSHIP' | 'PATH_BETWEEN' | 'NEIGHBORHOOD';
-
-export interface GraphFactsResult {
-  intent: ChatIntent;
-  items: { id: string; name: string; type: EntityType; relation?: string }[];
-  path?: string[];
+export interface ChatContext {
+  matchedEntities: { id: string; name: string; type: EntityType }[];
+  neighbors: ChatContextNeighbor[];
+  downstreamServices: { id: string; name: string }[];
+  upstreamServices: { id: string; name: string }[];
+  affectedFeatures: { id: string; name: string }[];
+  affectedProjects: { id: string; name: string }[];
+  owners: { id: string; name: string }[];
+  paths: string[][];
 }
 
 export interface ChatResponse {
   reply: string;
-  analysis?: ChatAnalysis;
-  graphFacts?: GraphFactsResult;
+  risk?: 'LOW' | 'MEDIUM' | 'HIGH';
+  recommendedTests?: string[];
+  explanations?: string[];
+  context?: ChatContext;
   matchedEntities: { id: string; name: string; type: EntityType }[];
 }
