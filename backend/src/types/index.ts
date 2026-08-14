@@ -55,30 +55,63 @@ export interface ChatTurn {
   content: string;
 }
 
-export interface ChatAnalysis {
-  targets: string[];
-  risk: 'LOW' | 'MEDIUM' | 'HIGH';
-  affectedServices: string[];
-  dependsOnServices: string[];
-  affectedFeatures: string[];
-  developers: string[];
-  paths: string[][];
-  recommendedTests: string[];
-  explanations: string[];
+export interface ChatContextNeighbor {
+  id: string;
+  name: string;
+  type: EntityType;
+  relType: RelationshipType;
+  direction: 'outgoing' | 'incoming';
 }
 
-export type ChatIntent = 'IMPACT_ANALYSIS' | 'OWNERSHIP' | 'PATH_BETWEEN' | 'NEIGHBORHOOD';
+/**
+ * Everything retrieved from the graph in a single pass for a chat question: the entities the
+ * question resolved to, their direct connections, and (where the matches include SERVICEs) the
+ * downstream/upstream impact, affected features/projects, and owners. Gemini answers freely from
+ * this — a plain lookup and a full impact analysis both come from the same retrieval.
+ */
+export interface ChatContext {
+  matchedEntities: { id: string; name: string; type: EntityType }[];
+  neighbors: ChatContextNeighbor[];
+  downstreamServices: { id: string; name: string }[];
+  upstreamServices: { id: string; name: string }[];
+  affectedFeatures: { id: string; name: string }[];
+  affectedProjects: { id: string; name: string }[];
+  owners: { id: string; name: string }[];
+  paths: string[][];
+}
 
-export interface GraphFactsResult {
-  intent: ChatIntent;
-  items: { id: string; name: string; type: EntityType; relation?: string }[];
-  path?: string[];
+export interface GraphSummaryEntity {
+  id: string;
+  name: string;
+  type: EntityType;
+  description: string;
+}
+
+export interface GraphSummaryRelationship {
+  from: string;
+  fromType: EntityType;
+  relType: RelationshipType;
+  to: string;
+  toType: EntityType;
+}
+
+/**
+ * Whole-graph snapshot used as a fallback context when a chat question doesn't name anything
+ * CognoDB's full-text search can link to (e.g. "what existing services could I reuse for a new
+ * email workflow?"). Still pure structural traversal data — all entities + all relationships, not
+ * semantic search — Gemini just reasons over the full known graph instead of a targeted neighborhood.
+ */
+export interface GraphSummary {
+  entities: GraphSummaryEntity[];
+  relationships: GraphSummaryRelationship[];
 }
 
 export interface ChatResponse {
   reply: string;
-  analysis?: ChatAnalysis;
-  graphFacts?: GraphFactsResult;
+  risk?: 'LOW' | 'MEDIUM' | 'HIGH';
+  recommendedTests?: string[];
+  explanations?: string[];
+  context?: ChatContext;
   matchedEntities: { id: string; name: string; type: EntityType }[];
 }
 

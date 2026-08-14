@@ -890,6 +890,12 @@
   border: 1px solid rgba(245, 158, 11, 0.2);
 }
 
+.tag-project {
+  background: rgba(168, 85, 247, 0.08);
+  color: #c084fc;
+  border: 1px solid rgba(168, 85, 247, 0.2);
+}
+
 .bullet-list {
   list-style: none;
   font-size: 0.875rem;

@@ -23,14 +23,6 @@ export interface CognoPathNode {
   type: EntityType;
 }
 
-export interface CognoNeighbor {
-  id: string;
-  name: string;
-  type: EntityType;
-  relType: RelationshipType;
-  direction: 'outgoing' | 'incoming';
-}
-
 function escapeLucene(term: string): string {
   return term.replace(/[+\-&|!(){}[\]^"~*?:\\/]/g, '\\$&');
 }
@@ -198,31 +190,6 @@ export const cognoService = {
   },
 
   /**
-   * Owners (DEVELOPER) of the given SERVICE entities, via OWNED_BY
-   */
-  findOwners: async (entityIds: string[]): Promise<Array<{ id: string; name: string }>> => {
-    if (!driver) throw new Error('CognoDB driver not initialized');
-    if (entityIds.length === 0) return [];
-
-    const session = driver.session();
-    try {
-      const result = await session.run(
-        `MATCH (s:Entity) WHERE s.id IN $ids
-         MATCH (s)-[:OWNED_BY]->(dev:Entity)
-         RETURN DISTINCT dev.id as id, dev.name as name`,
-        { ids: entityIds }
-      );
-
-      return result.records.map(record => ({
-        id: record.get('id'),
-        name: record.get('name')
-      }));
-    } finally {
-      await session.close();
-    }
-  },
-
-  /**
    * Shortest path (any relationship type/direction) between two entities
    */
   findShortestPath: async (fromId: string, toId: string): Promise<CognoPathNode[] | null> => {
@@ -239,33 +206,6 @@ export const cognoService = {
 
       if (result.records.length === 0) return null;
       return result.records[0].get('path') as CognoPathNode[];
-    } finally {
-      await session.close();
-    }
-  },
-
-  /**
-   * One-hop neighborhood of an entity, any relationship type/direction
-   */
-  findNeighborhood: async (entityId: string): Promise<CognoNeighbor[]> => {
-    if (!driver) throw new Error('CognoDB driver not initialized');
-
-    const session = driver.session();
-    try {
-      const result = await session.run(
-        `MATCH (n:Entity {id: $entityId})-[r]-(neighbor:Entity)
-         RETURN neighbor.id as id, neighbor.name as name, neighbor.type as type, type(r) as relType,
-                CASE WHEN startNode(r) = n THEN 'outgoing' ELSE 'incoming' END as direction`,
-        { entityId }
-      );
-
-      return result.records.map(record => ({
-        id: record.get('id'),
-        name: record.get('name'),
-        type: record.get('type') as EntityType,
-        relType: record.get('relType') as RelationshipType,
-        direction: record.get('direction') as 'outgoing' | 'incoming'
-      }));
     } finally {
       await session.close();
     }

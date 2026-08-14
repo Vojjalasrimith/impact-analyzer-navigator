@@ -1,16 +1,11 @@
 import { Request, Response } from 'express';
-import { cognoService, CognoEntityMatch } from '../services/cognoService.js';
+import { cognoService } from '../services/cognoService.js';
 import { graphTraversalService } from '../services/graphTraversalService.js';
-import { geminiService } from '../services/geminiService.js';
+import { geminiService, extractSearchTerms } from '../services/geminiService.js';
 import { ChatTurn, ChatResponse } from '../types/index.js';
 import { createLogger } from '../utils/logger.js';
 
 const log = createLogger('ChatController')('handleMessage');
-
-function bestMatch(matches: CognoEntityMatch[], type?: string): CognoEntityMatch | undefined {
-  const pool = type ? matches.filter(m => m.type === type) : matches;
-  return pool[0];
-}
 
 export const chatController = {
   // POST /api/chat
@@ -24,153 +19,47 @@ export const chatController = {
       }
 
       const safeHistory = Array.isArray(history) ? history : [];
-      const classification = await geminiService.classifyIntent(message, safeHistory);
-      log.info('Classified chat message', { intent: classification.intent, message });
 
-      switch (classification.intent) {
-        case 'OWNERSHIP': {
-          const matches = await cognoService.searchEntities(classification.searchTerms.join(' '));
-          const serviceMatches = matches.filter(m => m.type === 'SERVICE');
+      // Entity linking: resolve whatever the message mentions via CognoDB full-text search.
+      // This is plain retrieval, not reasoning, so it doesn't need a Gemini call.
+      const searchTerms = extractSearchTerms(message);
+      const matches = searchTerms.length > 0 ? await cognoService.searchEntities(searchTerms.join(' ')) : [];
 
-          if (serviceMatches.length === 0) {
-            const reply = matches.length > 0
-              ? `I found ${matches.map(m => `"${m.name}" (${m.type})`).join(', ')}, but ownership is only tracked for SERVICE entities. Could you name a specific service?`
-              : `I couldn't find anything in the graph matching that — try a different name or keyword.`;
-            log.info('Ownership lookup: no SERVICE match', { searchTerms: classification.searchTerms, matchCount: matches.length });
-            res.status(200).json({ reply, matchedEntities: matches } as ChatResponse);
-            return;
-          }
-
-          const owners = await cognoService.findOwners(serviceMatches.map(m => m.id));
-          const serviceNames = serviceMatches.map(m => m.name);
-          const factsText = owners.length > 0
-            ? `${serviceNames.join(', ')} is/are owned by: ${owners.map(o => o.name).join(', ')}.`
-            : `${serviceNames.join(', ')} has/have no recorded owner in the graph.`;
-
-          const { reply } = await geminiService.chatRespondGeneric(message, safeHistory, factsText);
-
-          const response: ChatResponse = {
-            reply,
-            graphFacts: {
-              intent: 'OWNERSHIP',
-              items: owners.map(o => ({ id: o.id, name: o.name, type: 'DEVELOPER' as const, relation: 'OWNS' }))
-            },
-            matchedEntities: matches
-          };
-          log.info('Ownership lookup resolved', { services: serviceNames, ownerCount: owners.length });
-          res.status(200).json(response);
-          return;
-        }
-
-        case 'PATH_BETWEEN': {
-          const [matchesA, matchesB] = await Promise.all([
-            cognoService.searchEntities(classification.entityA || ''),
-            cognoService.searchEntities(classification.entityB || '')
-          ]);
-          const entityA = bestMatch(matchesA);
-          const entityB = bestMatch(matchesB);
-
-          if (!entityA || !entityB) {
-            const missing = !entityA && !entityB ? `either entity` : !entityA ? `"${classification.entityA}"` : `"${classification.entityB}"`;
-            log.info('Path lookup: entity not resolved', { entityA: classification.entityA, entityB: classification.entityB });
-            res.status(200).json({
-              reply: `I couldn't find ${missing} in the graph — could you give me the exact names?`,
-              matchedEntities: [...matchesA, ...matchesB]
-            } as ChatResponse);
-            return;
-          }
-
-          const path = await cognoService.findShortestPath(entityA.id, entityB.id);
-          const factsText = path
-            ? `Path from ${entityA.name} to ${entityB.name}: ${path.map(n => `${n.name} (${n.type})`).join(' -> ')}`
-            : `No path was found between ${entityA.name} and ${entityB.name} in the graph.`;
-
-          const { reply } = await geminiService.chatRespondGeneric(message, safeHistory, factsText);
-
-          const response: ChatResponse = {
-            reply,
-            graphFacts: {
-              intent: 'PATH_BETWEEN',
-              items: (path || []).map(n => ({ id: n.id, name: n.name, type: n.type })),
-              path: path ? path.map(n => `${n.name} (${n.type})`) : undefined
-            },
-            matchedEntities: [entityA, entityB]
-          };
-          log.info('Path lookup resolved', { from: entityA.name, to: entityB.name, pathFound: !!path, hops: path?.length ?? 0 });
-          res.status(200).json(response);
-          return;
-        }
-
-        case 'NEIGHBORHOOD': {
-          const matches = await cognoService.searchEntities(classification.searchTerms.join(' '));
-          const target = bestMatch(matches);
-
-          if (!target) {
-            log.info('Neighborhood lookup: no match', { searchTerms: classification.searchTerms });
-            res.status(200).json({
-              reply: `I couldn't find anything in the graph matching that — try a different name or keyword.`,
-              matchedEntities: matches
-            } as ChatResponse);
-            return;
-          }
-
-          const neighbors = await cognoService.findNeighborhood(target.id);
-          const factsText = neighbors.length > 0
-            ? `${target.name} directly connects to: ${neighbors.map(n => `${n.name} (${n.type}) via ${n.relType} [${n.direction}]`).join('; ')}.`
-            : `${target.name} has no direct connections in the graph.`;
-
-          const { reply } = await geminiService.chatRespondGeneric(message, safeHistory, factsText);
-
-          const response: ChatResponse = {
-            reply,
-            graphFacts: {
-              intent: 'NEIGHBORHOOD',
-              items: neighbors.map(n => ({ id: n.id, name: n.name, type: n.type, relation: `${n.relType} (${n.direction})` }))
-            },
-            matchedEntities: matches
-          };
-          log.info('Neighborhood lookup resolved', { target: target.name, neighborCount: neighbors.length });
-          res.status(200).json(response);
-          return;
-        }
-
-        case 'IMPACT_ANALYSIS':
-        default: {
-          const matches = await cognoService.searchEntities(classification.searchTerms.join(' '));
-          const serviceMatches = matches.filter(m => m.type === 'SERVICE');
-
-          if (serviceMatches.length === 0) {
-            const reply = matches.length > 0
-              ? `I found ${matches.map(m => `"${m.name}" (${m.type})`).join(', ')}, but impact analysis currently only works starting from a SERVICE. Could you name a specific service?`
-              : `I couldn't find anything in the graph matching that — try a different name or keyword.`;
-            log.info('Impact analysis: no SERVICE match', { searchTerms: classification.searchTerms, matchCount: matches.length });
-            res.status(200).json({ reply, matchedEntities: matches } as ChatResponse);
-            return;
-          }
-
-          const traversal = await graphTraversalService.analyzeMultiImpact(serviceMatches.map(m => m.id));
-          const analyzed = await geminiService.chatAnalyze(message, safeHistory, traversal);
-
-          const response: ChatResponse = {
-            reply: analyzed.reply,
-            analysis: {
-              targets: traversal.targets.map(t => t.name),
-              risk: analyzed.risk,
-              affectedServices: traversal.affectedServices.map(s => s.name),
-              dependsOnServices: traversal.dependsOnServices.map(s => s.name),
-              affectedFeatures: traversal.affectedFeatures.map(f => f.name),
-              developers: traversal.affectedDevelopers.map(d => d.name),
-              paths: traversal.paths,
-              recommendedTests: analyzed.recommendedTests,
-              explanations: analyzed.explanations
-            },
-            matchedEntities: matches
-          };
-          log.info('Impact analysis resolved', { targets: traversal.targets.map(t => t.name), risk: analyzed.risk });
-          res.status(200).json(response);
-          return;
-        }
+      if (matches.length === 0) {
+        // No entity linked: fall back to the whole known graph so Gemini can still reason about
+        // open-ended/planning questions (e.g. "what existing services could I reuse for X?")
+        // instead of dead-ending on a "nothing matched" message.
+        const summary = await graphTraversalService.compileGraphSummary();
+        const { reply, risk, recommendedTests, explanations } = await geminiService.chatRespondOpenGraph(message, safeHistory, summary);
+        log.info('Chat: no entity match, used whole-graph fallback', { searchTerms });
+        res.status(200).json({
+          reply,
+          risk,
+          recommendedTests: recommendedTests.length > 0 ? recommendedTests : undefined,
+          explanations: explanations.length > 0 ? explanations : undefined,
+          matchedEntities: []
+        } as ChatResponse);
+        return;
       }
+
+      // Single retrieval pass: compile the full local graph context around every matched entity
+      // (direct connections, downstream/upstream impact, owners, paths between the matches).
+      const context = await graphTraversalService.compileContext(matches.map(m => m.id));
+
+      // Single generation pass: let Gemini answer whatever was actually asked from that context —
+      // a plain lookup or a full impact analysis, whichever fits the question.
+      const { reply, risk, recommendedTests, explanations } = await geminiService.chatRespondRAG(message, safeHistory, context);
+
+      const response: ChatResponse = {
+        reply,
+        risk,
+        recommendedTests: recommendedTests.length > 0 ? recommendedTests : undefined,
+        explanations: explanations.length > 0 ? explanations : undefined,
+        context,
+        matchedEntities: matches.map(m => ({ id: m.id, name: m.name, type: m.type }))
+      };
+      log.info('Chat resolved', { matched: context.matchedEntities.map(e => e.name), risk });
+      res.status(200).json(response);
     } catch (err: any) {
       log.error('Chat message error', { body: req.body, error: err.message });
       res.status(500).json({ error: err.message });
