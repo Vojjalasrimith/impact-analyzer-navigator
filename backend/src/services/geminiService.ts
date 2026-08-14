@@ -2,8 +2,10 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import dotenv from 'dotenv';
 import { ChatTurn, ChatIntent } from '../types/index.js';
 import { MultiTraversalResult } from './graphTraversalService.js';
+import { createLogger } from '../utils/logger.js';
 
 const CHAT_MODEL = 'gemini-3.5-flash-lite';
+const getLogger = createLogger('GeminiService');
 
 export interface ChatIntentClassification {
   intent: ChatIntent;
@@ -68,7 +70,7 @@ let genAI: GoogleGenerativeAI | null = null;
 if (apiKey) {
   genAI = new GoogleGenerativeAI(apiKey);
 } else {
-  console.warn('GEMINI_API_KEY is not defined in environment variables. Operating in programmatic fallback mode for impact analysis.');
+  getLogger('init').warn('GEMINI_API_KEY is not defined in environment variables. Operating in programmatic fallback mode for impact analysis.');
 }
 
 export const geminiService = {
@@ -128,7 +130,7 @@ Output ONLY raw JSON matching this schema, no markdown:
 
       return { intent, searchTerms, entityA: parsed.entityA, entityB: parsed.entityB };
     } catch (err: any) {
-      console.error('Gemini intent classification failed, reverting to naive classification:', err.message);
+      getLogger('classifyIntent').error('Gemini intent classification failed, reverting to naive classification', { error: err.message });
       return naiveClassifyIntent(message);
     }
   },
@@ -202,7 +204,7 @@ Guidelines:
         explanations: parsed.explanations || [`Changes to ${targetNames.join(', ')} propagate through the dependency graph.`]
       };
     } catch (err: any) {
-      console.error('Gemini chat analysis failed, reverting to programmatic fallback:', err.message);
+      getLogger('chatAnalyze').error('Gemini chat analysis failed, reverting to programmatic fallback', { error: err.message });
       return generateChatProgrammaticFallback(targetNames, downstreamNames, upstreamNames, featureNames, traversal.paths);
     }
   },
@@ -247,7 +249,7 @@ Write a natural, direct reply based ONLY on the facts above. Output ONLY the rep
       const reply = result.response.text().trim();
       return { reply: reply || factsText };
     } catch (err: any) {
-      console.error('Gemini generic chat response failed, reverting to raw facts:', err.message);
+      getLogger('chatRespondGeneric').error('Gemini generic chat response failed, reverting to raw facts', { error: err.message });
       return { reply: factsText };
     }
   }

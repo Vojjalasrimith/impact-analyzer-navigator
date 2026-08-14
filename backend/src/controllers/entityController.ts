@@ -8,6 +8,9 @@ import {
 } from '../models/index.js';
 import { cognoService } from '../services/cognoService.js';
 import { EntityType } from '../types/index.js';
+import { createLogger } from '../utils/logger.js';
+
+const getLogger = createLogger('EntityController');
 
 /**
  * Helper to find an entity by ID across all 4 split collections
@@ -46,8 +49,10 @@ export const entityController = {
         ...developers
       ];
 
+      getLogger('listEntities').info('Listed entities', { count: allEntities.length });
       res.status(200).json(allEntities);
     } catch (err: any) {
+      getLogger('listEntities').error('Failed to list entities', { error: err.message });
       res.status(500).json({ error: err.message });
     }
   },
@@ -63,8 +68,10 @@ export const entityController = {
         return;
       }
       
+      getLogger('getEntity').info('Fetched entity', { id, type: entity.type });
       res.status(200).json(entity.doc);
     } catch (err: any) {
+      getLogger('getEntity').error('Failed to get entity', { id: req.params.id, error: err.message });
       res.status(500).json({ error: err.message });
     }
   },
@@ -93,8 +100,10 @@ export const entityController = {
       const id = newDoc.id;
       await cognoService.createNode(id, type, name, description || '');
 
+      getLogger('createEntity').info('Entity created', { id, type, name });
       res.status(201).json(newDoc);
     } catch (err: any) {
+      getLogger('createEntity').error('Failed to create entity', { body: req.body, error: err.message });
       res.status(500).json({ error: err.message });
     }
   },
@@ -123,8 +132,10 @@ export const entityController = {
       // Sync node update to CognoDB
       await cognoService.createNode(entity.doc.id, entity.type, entity.doc.name, entity.doc.description || '');
 
+      getLogger('updateEntity').info('Entity updated', { id, type: entity.type });
       res.status(200).json(entity.doc);
     } catch (err: any) {
+      getLogger('updateEntity').error('Failed to update entity', { id: req.params.id, error: err.message });
       res.status(500).json({ error: err.message });
     }
   },
@@ -145,8 +156,10 @@ export const entityController = {
       // Clean up node and any associated edges from CognoDB
       await cognoService.deleteNode(id);
 
+      getLogger('deleteEntity').info('Entity deleted', { id, type: entity.type });
       res.status(200).json({ message: 'Entity deleted successfully' });
     } catch (err: any) {
+      getLogger('deleteEntity').error('Failed to delete entity', { id: req.params.id, error: err.message });
       res.status(500).json({ error: err.message });
     }
   }

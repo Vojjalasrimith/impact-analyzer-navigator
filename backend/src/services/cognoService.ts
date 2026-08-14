@@ -1,8 +1,11 @@
 import neo4j, { Driver } from 'neo4j-driver';
 import dotenv from 'dotenv';
 import { Relationship, RelationshipType, EntityType } from '../types/index.js';
+import { createLogger } from '../utils/logger.js';
 
 dotenv.config();
+
+const log = createLogger('CognoService')('connect');
 
 let driver: Driver | null = null;
 
@@ -43,7 +46,7 @@ export const cognoService = {
     try {
       driver = neo4j.driver(url, neo4j.auth.basic(username, key));
       await driver.verifyConnectivity();
-      console.log('Successfully connected to CognoDB Cloud');
+      log.info('Successfully connected to CognoDB Cloud');
 
       const session = driver.session();
       try {
@@ -54,7 +57,7 @@ export const cognoService = {
         await session.close();
       }
     } catch (err: any) {
-      console.error('CognoDB connection error:', err);
+      log.error('CognoDB connection error', { error: err.message });
       throw err;
     }
   },

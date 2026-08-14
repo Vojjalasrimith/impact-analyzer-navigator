@@ -7,6 +7,9 @@ import {
 } from '../models/index.js';
 import { cognoService } from '../services/cognoService.js';
 import { type GraphData } from '../types/index.js';
+import { createLogger } from '../utils/logger.js';
+
+const log = createLogger('GraphController')('getGraph');
 
 export const graphController = {
   // GET /api/graph
@@ -65,9 +68,10 @@ export const graphController = {
         edges: formattedEdges
       };
 
+      log.info('Retrieved graph', { nodes: formattedNodes.length, edges: formattedEdges.length });
       res.status(200).json(graphData);
     } catch (err: any) {
-      console.error('Failed to retrieve graph data:', err);
+      log.error('Failed to retrieve graph data', { error: err.message });
       res.status(500).json({ error: err.message });
     }
   }

@@ -15,7 +15,8 @@
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "mongoose": "^8.5.2",
-    "neo4j-driver": "^6.2.0"
+    "neo4j-driver": "^6.2.0",
+    "winston": "^3.19.0"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",

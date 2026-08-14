@@ -8,6 +8,9 @@ import {
 import { cognoService } from '../services/cognoService.js';
 import { isValidRelationship } from '../utils/validation.js';
 import { EntityType, RelationshipType } from '../types/index.js';
+import { createLogger } from '../utils/logger.js';
+
+const getLogger = createLogger('RelationshipController');
 
 /**
  * Helper to find an entity by ID across all 4 split collections and return its type
@@ -33,8 +36,10 @@ export const relationshipController = {
   listRelationships: async (req: Request, res: Response): Promise<void> => {
     try {
       const relationships = await cognoService.getRelationships();
+      getLogger('listRelationships').info('Listed relationships', { count: relationships.length });
       res.status(200).json(relationships);
     } catch (err: any) {
+      getLogger('listRelationships').error('Failed to list relationships', { error: err.message });
       res.status(500).json({ error: err.message });
     }
   },
@@ -84,8 +89,10 @@ export const relationshipController = {
 
       // Create relationship in CognoDB
       const result = await cognoService.createRelationship(from, to, type as RelationshipType);
+      getLogger('createRelationship').info('Relationship created', { from, to, type });
       res.status(201).json(result);
     } catch (err: any) {
+      getLogger('createRelationship').error('Failed to create relationship', { body: req.body, error: err.message });
       res.status(500).json({ error: err.message });
     }
   },
@@ -101,8 +108,10 @@ export const relationshipController = {
       }
 
       await cognoService.deleteRelationship(id);
+      getLogger('deleteRelationship').info('Relationship deleted', { id });
       res.status(200).json({ message: 'Relationship deleted successfully' });
     } catch (err: any) {
+      getLogger('deleteRelationship').error('Failed to delete relationship', { id: req.params.id, error: err.message });
       res.status(500).json({ error: err.message });
     }
   }

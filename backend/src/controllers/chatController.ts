@@ -3,6 +3,9 @@ import { cognoService, CognoEntityMatch } from '../services/cognoService.js';
 import { graphTraversalService } from '../services/graphTraversalService.js';
 import { geminiService } from '../services/geminiService.js';
 import { ChatTurn, ChatResponse } from '../types/index.js';
+import { createLogger } from '../utils/logger.js';
+
+const log = createLogger('ChatController')('handleMessage');
 
 function bestMatch(matches: CognoEntityMatch[], type?: string): CognoEntityMatch | undefined {
   const pool = type ? matches.filter(m => m.type === type) : matches;
@@ -22,6 +25,7 @@ export const chatController = {
 
       const safeHistory = Array.isArray(history) ? history : [];
       const classification = await geminiService.classifyIntent(message, safeHistory);
+      log.info('Classified chat message', { intent: classification.intent, message });
 
       switch (classification.intent) {
         case 'OWNERSHIP': {
@@ -32,6 +36,7 @@ export const chatController = {
             const reply = matches.length > 0
               ? `I found ${matches.map(m => `"${m.name}" (${m.type})`).join(', ')}, but ownership is only tracked for SERVICE entities. Could you name a specific service?`
               : `I couldn't find anything in the graph matching that — try a different name or keyword.`;
+            log.info('Ownership lookup: no SERVICE match', { searchTerms: classification.searchTerms, matchCount: matches.length });
             res.status(200).json({ reply, matchedEntities: matches } as ChatResponse);
             return;
           }
@@ -52,6 +57,7 @@ export const chatController = {
             },
             matchedEntities: matches
           };
+          log.info('Ownership lookup resolved', { services: serviceNames, ownerCount: owners.length });
           res.status(200).json(response);
           return;
         }
@@ -66,6 +72,7 @@ export const chatController = {
 
           if (!entityA || !entityB) {
             const missing = !entityA && !entityB ? `either entity` : !entityA ? `"${classification.entityA}"` : `"${classification.entityB}"`;
+            log.info('Path lookup: entity not resolved', { entityA: classification.entityA, entityB: classification.entityB });
             res.status(200).json({
               reply: `I couldn't find ${missing} in the graph — could you give me the exact names?`,
               matchedEntities: [...matchesA, ...matchesB]
@@ -89,6 +96,7 @@ export const chatController = {
             },
             matchedEntities: [entityA, entityB]
           };
+          log.info('Path lookup resolved', { from: entityA.name, to: entityB.name, pathFound: !!path, hops: path?.length ?? 0 });
           res.status(200).json(response);
           return;
         }
@@ -98,6 +106,7 @@ export const chatController = {
           const target = bestMatch(matches);
 
           if (!target) {
+            log.info('Neighborhood lookup: no match', { searchTerms: classification.searchTerms });
             res.status(200).json({
               reply: `I couldn't find anything in the graph matching that — try a different name or keyword.`,
               matchedEntities: matches
@@ -120,6 +129,7 @@ export const chatController = {
             },
             matchedEntities: matches
           };
+          log.info('Neighborhood lookup resolved', { target: target.name, neighborCount: neighbors.length });
           res.status(200).json(response);
           return;
         }
@@ -133,6 +143,7 @@ export const chatController = {
             const reply = matches.length > 0
               ? `I found ${matches.map(m => `"${m.name}" (${m.type})`).join(', ')}, but impact analysis currently only works starting from a SERVICE. Could you name a specific service?`
               : `I couldn't find anything in the graph matching that — try a different name or keyword.`;
+            log.info('Impact analysis: no SERVICE match', { searchTerms: classification.searchTerms, matchCount: matches.length });
             res.status(200).json({ reply, matchedEntities: matches } as ChatResponse);
             return;
           }
@@ -155,12 +166,13 @@ export const chatController = {
             },
             matchedEntities: matches
           };
+          log.info('Impact analysis resolved', { targets: traversal.targets.map(t => t.name), risk: analyzed.risk });
           res.status(200).json(response);
           return;
         }
       }
     } catch (err: any) {
-      console.error('Chat message error:', err);
+      log.error('Chat message error', { body: req.body, error: err.message });
       res.status(500).json({ error: err.message });
     }
   }

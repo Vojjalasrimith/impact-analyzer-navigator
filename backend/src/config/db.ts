@@ -1,5 +1,8 @@
 import mongoose from 'mongoose';
 import { ServerApiVersion } from 'mongodb';
+import { createLogger } from '../utils/logger.js';
+
+const log = createLogger('Config')('db');
 
 export async function connectDatabase(uri: string): Promise<string> {
   try {
@@ -10,10 +13,10 @@ export async function connectDatabase(uri: string): Promise<string> {
         deprecationErrors: true,
       }
     });
-    console.log('Successfully connected to MongoDB Atlas');
+    log.info('Successfully connected to MongoDB Atlas');
     return 'Connected';
   } catch (err: any) {
-    console.error('MongoDB connection error:', err);
+    log.error('MongoDB connection error', { error: err.message });
     throw err;
   }
 }

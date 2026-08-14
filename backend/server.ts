@@ -5,8 +5,10 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { connectDatabase } from './src/config/db.js';
 import ApiRouter from "./src/routes/routes.js"
+import { createLogger } from './src/utils/logger.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const getLogger = createLogger('Server');
 
 // Load env variables
 dotenv.config();
@@ -27,6 +29,8 @@ import { ProjectModel } from './src/models/index.js';
 import { cognoService } from './src/services/cognoService.js';
 
 // Connect to MongoDB
+const bootstrapLog = getLogger('bootstrap');
+
 connectDatabase(MONGODB_URI)
   .then(async () => {
     dbStatus = 'Connected';
@@ -40,11 +44,11 @@ connectDatabase(MONGODB_URI)
     // Automatically seed database if empty
     const count = await ProjectModel.countDocuments();
     if (count === 0) {
-      console.log('Database is empty. Running auto-seeding...');
+      bootstrapLog.info('Database is empty. Running auto-seeding...');
       try {
         await seedDatabase();
-      } catch (err) {
-        console.error('Failed to run auto-seeding:', err);
+      } catch (err: any) {
+        bootstrapLog.error('Failed to run auto-seeding', { error: err.message });
       }
     }
   })
@@ -74,14 +78,16 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 // Centralized error handling middleware
+const errorLog = getLogger('errorHandler');
 app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
-  console.error('Server error:', err);
+  errorLog.error('Unhandled server error', { path: req.path, method: req.method, error: err.message });
   res.status(500).json({
     error: err.message || 'Internal Server Error'
   });
 });
 
 // Start Server
+const startupLog = getLogger('startup');
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  startupLog.info(`Server running on port ${PORT}`);
 });

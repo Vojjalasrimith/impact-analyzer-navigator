@@ -7,9 +7,12 @@ import {
 } from '../models/index.js';
 import { cognoService } from '../services/cognoService.js';
 import { EntityType, RelationshipType } from '../types/index.js';
+import { createLogger } from './logger.js';
+
+const log = createLogger('Seeder')('seedDatabase');
 
 export async function seedDatabase() {
-  console.log('--- Starting Database Seeding ---');
+  log.info('--- Starting Database Seeding ---');
 
   // 1. Clean existing records across all split collections
   await Promise.all([
@@ -19,7 +22,7 @@ export async function seedDatabase() {
     DeveloperModel.deleteMany({})
   ]);
 
-  console.log('Cleaning live CognoDB graph nodes and relationships...');
+  log.info('Cleaning live CognoDB graph nodes and relationships...');
   await cognoService.clearGraph();
 
   // 2. Define Entities Data
@@ -63,7 +66,7 @@ export async function seedDatabase() {
     await cognoService.createNode(id, item.type, item.name, item.description);
   }
 
-  console.log(`Successfully seeded ${Object.keys(createdEntities).length} entities into MongoDB.`);
+  log.info(`Successfully seeded ${Object.keys(createdEntities).length} entities into MongoDB.`);
 
   // 4. Define Relationships Data
   const relationshipsToCreate: Array<{ from: string; to: string; type: RelationshipType }> = [
@@ -99,10 +102,10 @@ export async function seedDatabase() {
       await cognoService.createRelationship(fromId, toId, rel.type);
       relCount++;
     } else {
-      console.warn(`Could not seed relationship: ${rel.from} -> ${rel.to} because one or both IDs were missing.`);
+      log.warn(`Could not seed relationship: ${rel.from} -> ${rel.to} because one or both IDs were missing.`);
     }
   }
 
-  console.log(`Successfully seeded ${relCount} relationships into CognoDB.`);
-  console.log('--- Seeding Completed ---');
+  log.info(`Successfully seeded ${relCount} relationships into CognoDB.`);
+  log.info('--- Seeding Completed ---');
 }
