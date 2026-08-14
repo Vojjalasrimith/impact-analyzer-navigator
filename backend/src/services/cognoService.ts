@@ -1,10 +1,36 @@
 import neo4j, { Driver } from 'neo4j-driver';
 import dotenv from 'dotenv';
-import { Relationship, RelationshipType } from '../types/index.js';
+import { Relationship, RelationshipType, EntityType } from '../types/index.js';
 
 dotenv.config();
 
 let driver: Driver | null = null;
+
+export interface CognoEntityMatch {
+  id: string;
+  name: string;
+  type: EntityType;
+  description: string;
+  score: number;
+}
+
+export interface CognoPathNode {
+  id: string;
+  name: string;
+  type: EntityType;
+}
+
+export interface CognoNeighbor {
+  id: string;
+  name: string;
+  type: EntityType;
+  relType: RelationshipType;
+  direction: 'outgoing' | 'incoming';
+}
+
+function escapeLucene(term: string): string {
+  return term.replace(/[+\-&|!(){}[\]^"~*?:\\/]/g, '\\$&');
+}
 
 export const cognoService = {
   /**
@@ -18,6 +44,15 @@ export const cognoService = {
       driver = neo4j.driver(url, neo4j.auth.basic(username, key));
       await driver.verifyConnectivity();
       console.log('Successfully connected to CognoDB Cloud');
+
+      const session = driver.session();
+      try {
+        await session.run(
+          'CREATE FULLTEXT INDEX entitySearchIndex IF NOT EXISTS FOR (n:Entity) ON EACH [n.name, n.description]'
+        );
+      } finally {
+        await session.close();
+      }
     } catch (err: any) {
       console.error('CognoDB connection error:', err);
       throw err;
@@ -25,16 +60,18 @@ export const cognoService = {
   },
 
   /**
-   * Add a node representation (metadata is in MongoDB, CognoDB registers the node existence)
+   * Add a node representation (metadata is in MongoDB, CognoDB caches searchable fields for graph-native retrieval)
    */
-  createNode: async (id: string, type: string, name: string): Promise<void> => {
+  createNode: async (id: string, type: string, name: string, description: string = ''): Promise<void> => {
     if (!driver) throw new Error('CognoDB driver not initialized');
 
     const session = driver.session();
     try {
       await session.run(
-        'MERGE (n:Entity {id: $id}) ON CREATE SET n.type = $type, n.name = $name ON MATCH SET n.name = $name',
-        { id, type, name }
+        `MERGE (n:Entity {id: $id})
+         ON CREATE SET n.type = $type, n.name = $name, n.description = $description
+         ON MATCH SET n.name = $name, n.description = $description`,
+        { id, type, name, description }
       );
     } finally {
       await session.close();
@@ -119,6 +156,112 @@ export const cognoService = {
         fromEntityId: record.get('fromId'),
         toEntityId: record.get('toId'),
         type: record.get('type') as RelationshipType
+      }));
+    } finally {
+      await session.close();
+    }
+  },
+
+  /**
+   * Full-text search over node name/description (graph-native entity linking, no Mongo involved)
+   */
+  searchEntities: async (queryText: string, limit: number = 20): Promise<CognoEntityMatch[]> => {
+    if (!driver) throw new Error('CognoDB driver not initialized');
+
+    const terms = queryText.split(/\s+/).map(t => t.trim()).filter(Boolean);
+    if (terms.length === 0) return [];
+    const luceneQuery = terms.map(t => escapeLucene(t)).join(' OR ');
+
+    const session = driver.session();
+    try {
+      const result = await session.run(
+        `CALL db.index.fulltext.queryNodes('entitySearchIndex', $luceneQuery) YIELD node, score
+         RETURN node.id as id, node.name as name, node.type as type, node.description as description, score
+         ORDER BY score DESC
+         LIMIT $limit`,
+        { luceneQuery, limit: neo4j.int(limit) }
+      );
+
+      return result.records.map(record => ({
+        id: record.get('id'),
+        name: record.get('name'),
+        type: record.get('type') as EntityType,
+        description: record.get('description') || '',
+        score: record.get('score')
+      }));
+    } finally {
+      await session.close();
+    }
+  },
+
+  /**
+   * Owners (DEVELOPER) of the given SERVICE entities, via OWNED_BY
+   */
+  findOwners: async (entityIds: string[]): Promise<Array<{ id: string; name: string }>> => {
+    if (!driver) throw new Error('CognoDB driver not initialized');
+    if (entityIds.length === 0) return [];
+
+    const session = driver.session();
+    try {
+      const result = await session.run(
+        `MATCH (s:Entity) WHERE s.id IN $ids
+         MATCH (s)-[:OWNED_BY]->(dev:Entity)
+         RETURN DISTINCT dev.id as id, dev.name as name`,
+        { ids: entityIds }
+      );
+
+      return result.records.map(record => ({
+        id: record.get('id'),
+        name: record.get('name')
+      }));
+    } finally {
+      await session.close();
+    }
+  },
+
+  /**
+   * Shortest path (any relationship type/direction) between two entities
+   */
+  findShortestPath: async (fromId: string, toId: string): Promise<CognoPathNode[] | null> => {
+    if (!driver) throw new Error('CognoDB driver not initialized');
+
+    const session = driver.session();
+    try {
+      const result = await session.run(
+        `MATCH (a:Entity {id: $fromId}), (b:Entity {id: $toId})
+         MATCH p = shortestPath((a)-[*..8]-(b))
+         RETURN [n IN nodes(p) | {id: n.id, name: n.name, type: n.type}] as path`,
+        { fromId, toId }
+      );
+
+      if (result.records.length === 0) return null;
+      return result.records[0].get('path') as CognoPathNode[];
+    } finally {
+      await session.close();
+    }
+  },
+
+  /**
+   * One-hop neighborhood of an entity, any relationship type/direction
+   */
+  findNeighborhood: async (entityId: string): Promise<CognoNeighbor[]> => {
+    if (!driver) throw new Error('CognoDB driver not initialized');
+
+    const session = driver.session();
+    try {
+      const result = await session.run(
+        `MATCH (n:Entity {id: $entityId})-[r]-(neighbor:Entity)
+         RETURN neighbor.id as id, neighbor.name as name, neighbor.type as type, type(r) as relType,
+                CASE WHEN startNode(r) = n THEN 'outgoing' ELSE 'incoming' END as direction`,
+        { entityId }
+      );
+
+      return result.records.map(record => ({
+        id: record.get('id'),
+        name: record.get('name'),
+        type: record.get('type') as EntityType,
+        relType: record.get('relType') as RelationshipType,
+        direction: record.get('direction') as 'outgoing' | 'incoming'
       }));
     } finally {
       await session.close();

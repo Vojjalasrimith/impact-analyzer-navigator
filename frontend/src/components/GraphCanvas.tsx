@@ -55,8 +55,8 @@ export default function GraphCanvas({
   onSelectNode,
   onSelectEdge
 }: GraphCanvasProps) {
-  const [nodes, setNodes, onNodesChange] = useNodesState([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
 
   // NodeTypes registration for custom components
   const nodeTypes = useMemo(() => ({

@@ -91,7 +91,7 @@ export const entityController = {
 
       // Sync node presence into CognoDB
       const id = newDoc.id;
-      await cognoService.createNode(id, type, name);
+      await cognoService.createNode(id, type, name, description || '');
 
       res.status(201).json(newDoc);
     } catch (err: any) {
@@ -121,7 +121,7 @@ export const entityController = {
       await entity.doc.save();
 
       // Sync node update to CognoDB
-      await cognoService.createNode(entity.doc.id, entity.type, entity.doc.name);
+      await cognoService.createNode(entity.doc.id, entity.type, entity.doc.name, entity.doc.description || '');
 
       res.status(200).json(entity.doc);
     } catch (err: any) {

@@ -13,6 +13,7 @@ import {
 import type { GraphNode, GraphEdge, Entity, EntityType, RelationshipType } from './types/index';
 import GraphCanvas from './components/GraphCanvas';
 import Sidebar from './components/Sidebar';
+import ChatPanel from './components/ChatPanel';
 import { EntityModal, RelationshipModal } from './components/Modals';
 import { ToastContainer, toast } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
@@ -39,6 +40,15 @@ function App() {
   const [isEntityModalOpen, setIsEntityModalOpen] = useState(false);
   const [isRelModalOpen, setIsRelModalOpen] = useState(false);
   const [editingNode, setEditingNode] = useState<{ id: string; name: string; type: string; description: string } | null>(null);
+
+  // Chat panel state
+  const [isChatOpen, setIsChatOpen] = useState(false);
+  const [chatPrefill, setChatPrefill] = useState('');
+
+  const openChatForService = (serviceName: string) => {
+    setChatPrefill(`Analyze the impact of changing "${serviceName}".`);
+    setIsChatOpen(true);
+  };
 
   // API Call: check health status
   const checkBackendHealth = async () => {
@@ -174,6 +184,12 @@ function App() {
           >
             🔗 Add Link
           </button>
+          <button
+            className="btn btn-secondary-outline"
+            onClick={() => { setChatPrefill(''); setIsChatOpen(true); }}
+          >
+            💬 Ask AI
+          </button>
         </div>
         <div className="status-indicator">
           {healthLoading ? (
@@ -183,7 +199,7 @@ function App() {
               Offline 🔌
             </span>
           ) : (
-            <span className="badge online" onClick={checkBackendHealth} title="Click to refresh">
+            <span className="badge online" onClick={checkBackendHealth} title={`DB: ${health?.database ?? 'unknown'} — click to refresh`}>
               Online ⚡
             </span>
           )}
@@ -200,6 +216,7 @@ function App() {
             onEditEntity={() => { setEditingNode(selectedNode); setIsEntityModalOpen(true); }}
             onDeleteEntity={handleEntityDelete}
             onDeleteRelationship={handleRelationshipDelete}
+            onAskAboutImpact={openChatForService}
           />
         </div>
 
@@ -250,6 +267,12 @@ function App() {
       />
 
       <ToastContainer position="bottom-right" autoClose={3000} theme="dark" />
+
+      <ChatPanel
+        isOpen={isChatOpen}
+        onClose={() => setIsChatOpen(false)}
+        prefill={chatPrefill}
+      />
     </div>
   );
 }

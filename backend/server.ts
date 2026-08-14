@@ -8,6 +8,7 @@ import entityRouter from './src/routes/entityRoutes.js';
 import relationshipRouter from './src/routes/relationshipRoutes.js';
 import graphRouter from './src/routes/graphRoutes.js';
 import impactRouter from './src/routes/impactRoutes.js';
+import chatRouter from './src/routes/chatRoutes.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -76,6 +77,9 @@ app.use('/api/graph', graphRouter);
 
 // Impact analysis endpoint
 app.use('/api/impact-analysis', impactRouter);
+
+// Conversational impact-analysis chat endpoint
+app.use('/api/chat', chatRouter);
 
 // Serve the built frontend as static assets in production, with SPA fallback
 if (process.env.NODE_ENV === 'production') {

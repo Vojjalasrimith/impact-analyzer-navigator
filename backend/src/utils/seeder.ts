@@ -60,7 +60,7 @@ export async function seedDatabase() {
     createdEntities[item.name] = id;
 
     // Sync node to CognoDB if live database
-    await cognoService.createNode(id, item.type, item.name);
+    await cognoService.createNode(id, item.type, item.name, item.description);
   }
 
   console.log(`Successfully seeded ${Object.keys(createdEntities).length} entities into MongoDB.`);

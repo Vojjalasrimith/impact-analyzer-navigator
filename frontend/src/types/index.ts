@@ -51,3 +51,35 @@ export interface ImpactAnalysisResult {
   recommendedTests: string[];
   explanations: string[];
 }
+
+export interface ChatTurn {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export interface ChatAnalysis {
+  targets: string[];
+  risk: 'LOW' | 'MEDIUM' | 'HIGH';
+  affectedServices: string[];
+  dependsOnServices: string[];
+  affectedFeatures: string[];
+  developers: string[];
+  paths: string[][];
+  recommendedTests: string[];
+  explanations: string[];
+}
+
+export type ChatIntent = 'IMPACT_ANALYSIS' | 'OWNERSHIP' | 'PATH_BETWEEN' | 'NEIGHBORHOOD';
+
+export interface GraphFactsResult {
+  intent: ChatIntent;
+  items: { id: string; name: string; type: EntityType; relation?: string }[];
+  path?: string[];
+}
+
+export interface ChatResponse {
+  reply: string;
+  analysis?: ChatAnalysis;
+  graphFacts?: GraphFactsResult;
+  matchedEntities: { id: string; name: string; type: EntityType }[];
+}
