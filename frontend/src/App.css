@@ -736,6 +736,20 @@
   margin: 0 auto;
 }
 
+/* Small inline spinner for buttons (e.g. Saving.../Deleting...) — inherits the button's own
+   text color so it reads correctly on both .btn-primary and .btn-danger backgrounds */
+.spinner.spinner-sm {
+  width: 14px;
+  height: 14px;
+  border-width: 2px;
+  border-color: currentColor;
+  border-top-color: transparent;
+  opacity: 0.9;
+  margin: 0 6px 0 0;
+  display: inline-block;
+  vertical-align: middle;
+}
+
 .analysis-loading-state {
   display: flex;
   flex-direction: column;

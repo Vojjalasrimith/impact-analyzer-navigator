@@ -15,6 +15,7 @@ import GraphCanvas from './components/GraphCanvas';
 import Sidebar from './components/Sidebar';
 import ChatPanel from './components/ChatPanel';
 import { EntityModal, RelationshipModal } from './components/Modals';
+import ConfirmDialog from './components/ConfirmDialog';
 import { ToastContainer, toast } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import './App.css';
@@ -40,6 +41,11 @@ function App() {
   const [isEntityModalOpen, setIsEntityModalOpen] = useState(false);
   const [isRelModalOpen, setIsRelModalOpen] = useState(false);
   const [editingNode, setEditingNode] = useState<{ id: string; name: string; type: string; description: string } | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Delete confirmation dialog state
+  const [confirmDialog, setConfirmDialog] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
+  const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
 
   // Chat panel state
   const [isChatOpen, setIsChatOpen] = useState(false);
@@ -91,6 +97,7 @@ function App() {
   // CRUD Handler: Create or Update Entity
   const handleEntitySubmit = async (data: { type: EntityType; name: string; description: string }) => {
     try {
+      setIsSubmitting(true);
       if (editingNode) {
         // Edit Mode
         await updateEntity(editingNode.id, { name: data.name, description: data.description });
@@ -114,51 +121,74 @@ function App() {
       await loadGraph();
     } catch (err: any) {
       toast.error(err.message || 'Failed to submit entity');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   // CRUD Handler: Delete Entity
-  const handleEntityDelete = async () => {
+  const handleEntityDelete = () => {
     if (!selectedNode) return;
-    const confirm = window.confirm(`Are you sure you want to delete the entity "${selectedNode.name}"?\nThis will remove all associated dependency links.`);
-    if (!confirm) return;
+    const node = selectedNode;
 
-    try {
-      await deleteEntity(selectedNode.id);
-      toast.success('Entity deleted successfully!');
-      setSelectedNode(null);
-      await loadGraph();
-    } catch (err: any) {
-      toast.error(err.message || 'Failed to delete entity');
-    }
+    setConfirmDialog({
+      title: '🗑️ Delete Entity',
+      message: `Are you sure you want to delete the entity "${node.name}"? This will remove all associated dependency links.`,
+      onConfirm: async () => {
+        try {
+          setIsConfirmingDelete(true);
+          await deleteEntity(node.id);
+          toast.success('Entity deleted successfully!');
+          setSelectedNode(null);
+          await loadGraph();
+          setConfirmDialog(null);
+        } catch (err: any) {
+          toast.error(err.message || 'Failed to delete entity');
+        } finally {
+          setIsConfirmingDelete(false);
+        }
+      }
+    });
   };
 
   // CRUD Handler: Create Relationship Edge
   const handleRelationshipSubmit = async (data: { from: string; to: string; type: RelationshipType }) => {
     try {
+      setIsSubmitting(true);
       await createRelationship(data);
       toast.success('Relationship link created!');
       setIsRelModalOpen(false);
       await loadGraph();
     } catch (err: any) {
       toast.error(err.message || 'Failed to establish link');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   // CRUD Handler: Delete Relationship Edge
-  const handleRelationshipDelete = async () => {
+  const handleRelationshipDelete = () => {
     if (!selectedEdgeId) return;
-    const confirm = window.confirm('Are you sure you want to delete this relationship link?');
-    if (!confirm) return;
+    const edgeId = selectedEdgeId;
 
-    try {
-      await deleteRelationship(selectedEdgeId);
-      toast.success('Relationship link removed!');
-      setSelectedEdgeId(null);
-      await loadGraph();
-    } catch (err: any) {
-      toast.error(err.message || 'Failed to delete relationship');
-    }
+    setConfirmDialog({
+      title: '🗑️ Delete Relationship',
+      message: 'Are you sure you want to delete this relationship link?',
+      onConfirm: async () => {
+        try {
+          setIsConfirmingDelete(true);
+          await deleteRelationship(edgeId);
+          toast.success('Relationship link removed!');
+          setSelectedEdgeId(null);
+          await loadGraph();
+          setConfirmDialog(null);
+        } catch (err: any) {
+          toast.error(err.message || 'Failed to delete relationship');
+        } finally {
+          setIsConfirmingDelete(false);
+        }
+      }
+    });
   };
 
   return (
@@ -257,6 +287,7 @@ function App() {
         onClose={() => { setIsEntityModalOpen(false); setEditingNode(null); }}
         onSubmit={handleEntitySubmit}
         initialData={editingNode}
+        isSubmitting={isSubmitting}
       />
 
       <RelationshipModal
@@ -264,6 +295,16 @@ function App() {
         onClose={() => setIsRelModalOpen(false)}
         onSubmit={handleRelationshipSubmit}
         entities={entities}
+        isSubmitting={isSubmitting}
+      />
+
+      <ConfirmDialog
+        isOpen={!!confirmDialog}
+        title={confirmDialog?.title || ''}
+        message={confirmDialog?.message || ''}
+        isConfirming={isConfirmingDelete}
+        onConfirm={() => confirmDialog?.onConfirm()}
+        onCancel={() => setConfirmDialog(null)}
       />
 
       <ToastContainer position="bottom-right" autoClose={3000} theme="dark" />

@@ -6,9 +6,10 @@ interface EntityModalProps {
   onClose: () => void;
   onSubmit: (entityData: { type: EntityType; name: string; description: string }) => void;
   initialData?: { id: string; name: string; type: string; description: string } | null;
+  isSubmitting?: boolean;
 }
 
-export function EntityModal({ isOpen, onClose, onSubmit, initialData }: EntityModalProps) {
+export function EntityModal({ isOpen, onClose, onSubmit, initialData, isSubmitting = false }: EntityModalProps) {
   const [name, setName] = useState('');
   const [type, setType] = useState<EntityType>('PROJECT');
   const [description, setDescription] = useState('');
@@ -38,7 +39,7 @@ export function EntityModal({ isOpen, onClose, onSubmit, initialData }: EntityMo
       <div className="modal-content card">
         <div className="modal-header">
           <h2>{initialData ? '✏️ Edit Entity' : '➕ Add New Entity'}</h2>
-          <button className="btn-close" onClick={onClose}>✕</button>
+          <button className="btn-close" onClick={onClose} disabled={isSubmitting}>✕</button>
         </div>
 
         <form onSubmit={handleSubmit} className="modal-form">
@@ -47,7 +48,7 @@ export function EntityModal({ isOpen, onClose, onSubmit, initialData }: EntityMo
             <select
               value={type}
               onChange={(e) => setType(e.target.value as EntityType)}
-              disabled={!!initialData} // Disallow changing type once created
+              disabled={!!initialData || isSubmitting} // Disallow changing type once created
               className="form-input"
             >
               <option value="PROJECT">PROJECT</option>
@@ -65,6 +66,7 @@ export function EntityModal({ isOpen, onClose, onSubmit, initialData }: EntityMo
               onChange={(e) => setName(e.target.value)}
               placeholder="e.g. Stripe Gateway Service"
               required
+              disabled={isSubmitting}
               className="form-input"
             />
           </div>
@@ -76,16 +78,22 @@ export function EntityModal({ isOpen, onClose, onSubmit, initialData }: EntityMo
               onChange={(e) => setDescription(e.target.value)}
               placeholder="Provide context about this entity..."
               rows={3}
+              disabled={isSubmitting}
               className="form-input"
             />
           </div>
 
           <div className="modal-actions">
-            <button type="button" className="btn btn-secondary" onClick={onClose}>
+            <button type="button" className="btn btn-secondary" onClick={onClose} disabled={isSubmitting}>
               Cancel
             </button>
-            <button type="submit" className="btn btn-primary">
-              {initialData ? 'Save Changes' : 'Create Entity'}
+            <button type="submit" className="btn btn-primary" disabled={isSubmitting}>
+              {isSubmitting ? (
+                <>
+                  <span className="spinner spinner-sm"></span>
+                  Saving...
+                </>
+              ) : initialData ? 'Save Changes' : 'Create Entity'}
             </button>
           </div>
         </form>
@@ -99,9 +107,10 @@ interface RelationshipModalProps {
   onClose: () => void;
   onSubmit: (relData: { from: string; to: string; type: RelationshipType }) => void;
   entities: Entity[];
+  isSubmitting?: boolean;
 }
 
-export function RelationshipModal({ isOpen, onClose, onSubmit, entities }: RelationshipModalProps) {
+export function RelationshipModal({ isOpen, onClose, onSubmit, entities, isSubmitting = false }: RelationshipModalProps) {
   const [fromId, setFromId] = useState('');
   const [relType, setRelType] = useState<RelationshipType>('HAS_FEATURE');
   const [toId, setToId] = useState('');
@@ -163,7 +172,7 @@ export function RelationshipModal({ isOpen, onClose, onSubmit, entities }: Relat
       <div className="modal-content card">
         <div className="modal-header">
           <h2>🔗 Add Relationship Link</h2>
-          <button className="btn-close" onClick={onClose}>✕</button>
+          <button className="btn-close" onClick={onClose} disabled={isSubmitting}>✕</button>
         </div>
 
         <form onSubmit={handleSubmit} className="modal-form">
@@ -174,6 +183,7 @@ export function RelationshipModal({ isOpen, onClose, onSubmit, entities }: Relat
               value={fromId}
               onChange={(e) => handleFromChange(e.target.value)}
               required
+              disabled={isSubmitting}
               className="form-input"
             >
               <option value="">-- Select Source Node --</option>
@@ -195,7 +205,7 @@ export function RelationshipModal({ isOpen, onClose, onSubmit, entities }: Relat
                 setToId(''); // Reset target when relation changes
               }}
               required
-              disabled={!fromId}
+              disabled={!fromId || isSubmitting}
               className="form-input"
             >
               {selectedFromEntity?.type === 'PROJECT' && (
@@ -221,7 +231,7 @@ export function RelationshipModal({ isOpen, onClose, onSubmit, entities }: Relat
               value={toId}
               onChange={(e) => setToId(e.target.value)}
               required
-              disabled={!fromId || filteredToEntities.length === 0}
+              disabled={!fromId || filteredToEntities.length === 0 || isSubmitting}
               className="form-input"
             >
               <option value="">
@@ -240,15 +250,20 @@ export function RelationshipModal({ isOpen, onClose, onSubmit, entities }: Relat
           </div>
 
           <div className="modal-actions">
-            <button type="button" className="btn btn-secondary" onClick={onClose}>
+            <button type="button" className="btn btn-secondary" onClick={onClose} disabled={isSubmitting}>
               Cancel
             </button>
             <button
               type="submit"
               className="btn btn-primary"
-              disabled={!fromId || !toId || filteredToEntities.length === 0}
+              disabled={!fromId || !toId || filteredToEntities.length === 0 || isSubmitting}
             >
-              Create Link
+              {isSubmitting ? (
+                <>
+                  <span className="spinner spinner-sm"></span>
+                  Saving...
+                </>
+              ) : 'Create Link'}
             </button>
           </div>
         </form>
